@@ -139,12 +139,12 @@
             </div>
             <div class="toolbar-separator"></div>
             <div class="toolbar-group">
-              <button @click="insertLink" title="Insert Link">🔗</button>
+              <button @click="insertLink" :class="{ active: isFormatActive('link') }" title="Insert Link">🔗</button>
               <button @click="insertImage" title="Insert Image" :disabled="isUploadingImage">
                 {{ isUploadingImage ? '⏳' : '🖼' }}
               </button>
-              <button @click="format('formatBlock', '<blockquote>')" title="Quote">"</button>
-              <button @click="format('formatBlock', '<pre>')" title="Code">&lt;/&gt;</button>
+              <button @click="format('formatBlock', '<blockquote>')" :class="{ active: isFormatActive('blockquote') }" title="Quote">"</button>
+              <button @click="format('formatBlock', '<pre>')" :class="{ active: isFormatActive('pre') }" title="Code">&lt;/&gt;</button>
             </div>
             <div class="toolbar-separator"></div>
             <div class="toolbar-group">
@@ -155,21 +155,35 @@
             <div class="toolbar-group">
               <button @click="clearAllFormatting" title="Clear Formatting">✖</button>
             </div>
+            <!-- Link Editor Pop-up -->
+            <div v-if="showLinkEditor" class="link-editor-popup">
+              <input type="text" v-model="currentLinkUrl" placeholder="https://example.com" @keydown.enter.prevent="applyLink" />
+              <button @click="applyLink">Apply</button>
+              <button @click="removeLink">Remove</button>
+              <button @click="showLinkEditor = false">Cancel</button>
+            </div>
           </div>
-          <div
-            ref="editor"
-            class="editor-content"
-            :class="{ empty: isEmpty }"
-            contenteditable="true"
-            @input="handleInput"
-            @keydown="handleKeydown"
-            @paste="handlePaste"
-            @mouseup="updateToolbarState"
-            @keyup="updateToolbarState"
-            :data-placeholder="placeholder"
-            spellcheck="true"
-            aria-label="Rich text editor"
-          ></div>
+          <div style="position: relative;">
+            <div
+              ref="editor"
+              class="editor-content"
+              :class="{ empty: isEmpty }"
+              contenteditable="true"
+              @input="handleInput"
+              @keydown="handleKeydown"
+              @paste="handlePaste"
+              @mouseup="updateToolbarState"
+              @keyup="updateToolbarState"
+              @click="handleEditorClick"
+              :data-placeholder="placeholder"
+              spellcheck="true"
+              aria-label="Rich text editor"
+            ></div>
+            <!-- Image Resize Handles -->
+            <div v-if="selectedImage" class="resize-handles" :style="resizeHandleStyle">
+              <div class="resize-handle" @mousedown.prevent="startResize"></div>
+            </div>
+          </div>
           <div class="status-bar">
             <span>Words: {{ wordCount }}</span>
             <span>Characters: {{ charCount }}</span>
@@ -180,52 +194,78 @@
 
         <!-- Other Form Fields -->
         <div class="form-grid">
+          <!-- Attachment -->
           <div class="row">
-            <div class="label">Attachment</div>
+            <div class="label">附件</div>
             <div class="control">
               <div class="file-btn" @click="triggerFileUpload">
-                {{ fileName || 'Click to upload file' }}
+                {{ fileName || '上传附件' }}
               </div>
               <input type="file" ref="fileInput" @change="handleFileChange" style="display: none" />
-              <div class="small">Max file size: 150MB</div>
-              <div class="error" v-if="fileError">{{ fileError }}</div>
+              <div class="small">信息安全禁止上传个人信息及涉密信息</div>
             </div>
           </div>
+
+          <!-- Domain Selection -->
           <div class="row">
-            <div class="label">Domain <span class="req">*</span></div>
-            <div class="control">
-              <div class="select-div" @click="toggleDomain">
-                {{ domain || 'Select a domain' }}
-                <div class="options" v-show="showDomain">
-                  <div class="option" v-for="d in domains" :key="d" @click.stop="selectDomain(d)">
-                    {{ d }}
-                  </div>
-                </div>
-              </div>
+            <div class="label">所属领域 <span class="req">*</span></div>
+            <div class="control inline-wrap">
+              <label v-for="domain in allDomains" :key="domain" class="checkbox-label">
+                <input type="checkbox" :value="domain" v-model="selectedDomains" />
+                {{ domain }}
+              </label>
             </div>
           </div>
+
+          <!-- Custom Tags -->
           <div class="row">
-            <div class="label">Custom Tags</div>
+            <div class="label">自定义标签</div>
             <div class="control">
               <div class="tag-input" contenteditable="true" @keydown.enter.prevent="addTagFromDiv($event)"></div>
               <div class="tags">
-                <div class="tag" v-for="(t, i) in tags" :key="i">
+                <div class="tag" v-for="(t, i) in customTags" :key="i">
                   {{ t }} <span class="remove" @click="removeTag(i)">×</span>
                 </div>
               </div>
+              <div class="small">输入自定义标签后按回车完成输入，最多可添加10个用户自定义标签</div>
             </div>
           </div>
+
+          <!-- Category Dropdown -->
           <div class="row">
-            <div class="label">Co-submitters</div>
+            <div class="label">Category <span class="req">*</span></div>
             <div class="control">
-              <div class="tag-input" contenteditable="true" @keydown.enter.prevent="addCoFromDiv($event)"></div>
+              <select v-model="selectedCategory" class="select-css">
+                <option disabled value="">Please select a category</option>
+                <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Expert Name -->
+          <div class="row">
+            <div class="label">所属专家</div>
+            <div class="control">
               <div class="tags">
-                <div class="tag" v-for="(c, i) in coSubmitters" :key="i">
-                  {{ c }} <span class="remove" @click="removeCo(i)">×</span>
+                  <div class="tag" v-for="(expert, i) in selectedExperts" :key="i">
+                  {{ expert }} <span class="remove" @click="removeExpert(i)">×</span>
+                </div>
+              </div>
+              <!-- Available Experts List -->
+              <div v-if="availableExperts.length" class="available-experts-list">
+                <div
+                  v-for="expert in availableExperts"
+                  :key="expert"
+                  @click="addExpert(expert)"
+                  class="available-expert-item"
+                >
+                  {{ expert }}
                 </div>
               </div>
             </div>
           </div>
+
+          <!-- Other Toggles -->
           <div class="row">
             <div class="label">Other</div>
             <div class="control inline">
@@ -237,7 +277,9 @@
               </div>
             </div>
           </div>
-          <div class="row">
+
+          <!-- Visibility -->
+           <div class="row">
             <div class="label">Visibility <span class="req">*</span></div>
             <div class="control inline">
               <div class="toggle-radio" :class="{ active: scope === 'public' }" @click="scope = 'public'">Public</div>
@@ -268,10 +310,22 @@ export default {
       postSummary: '',
       fileName: '',
       fileError: '',
-      domain: '',
-      showDomain: false,
-      domains: ['AI', 'Cloud', 'IoT', 'Security'],
-      tags: [],
+
+      // New dynamic fields data
+      categories: ['AI', 'Cloud', 'Software', 'IoT'],
+      selectedCategory: '',
+      dummyExperts: {
+        AI: ['Ali Ahmad / 84029066', 'John Doe / 12345678', 'Jane Smith / 87654321'],
+        Cloud: ['Peter Jones / 11223344', 'Susan Miller / 44332211'],
+        Software: ['David Chen / 55667788', 'Maria Garcia / 88776655', 'Ali Ahmad / 84029066'],
+        IoT: ['Kenji Tanaka / 99887766']
+      },
+      selectedExperts: [],
+      availableExperts: [],
+
+      allDomains: ['信创', '优选', '智改', '节能', '供应', 'EM2.0', '设备安全', '其他'],
+      selectedDomains: [],
+      customTags: [],
       hasPatent: false,
       hasDemo: false,
       coSubmitters: [],
@@ -286,8 +340,26 @@ export default {
       wordCount: 0,
       charCount: 0,
       shortcutHandler: null,
-      editorObserver: null,
       isUploadingImage: false,
+      savedSelection: null,
+      activeFormats: {
+        bold: false,
+        italic: false,
+        underline: false,
+        strikeThrough: false,
+        justifyLeft: false,
+        justifyCenter: false,
+        justifyRight: false,
+        justifyFull: false,
+        insertUnorderedList: false,
+        insertOrderedList: false,
+        blockquote: false,
+        pre: false,
+        link: false
+      },
+      showLinkEditor: false,
+      currentLinkUrl: '',
+      selectedImage: null,
 
       // API Configuration - Update these with your actual values
       imageUploadApiUrl: 'xxx', // Replace with your actual API endpoint
@@ -296,67 +368,94 @@ export default {
   },
   mounted() {
     this.$nextTick(() => {
+      document.execCommand('styleWithCSS', false, true)
+      document.execCommand('defaultParagraphSeparator', false, 'p');
       this.loadSavedContent()
       if (this.content) this.$refs.editor.innerHTML = this.content
       this.updateToolbarState()
       this.startAutoSave()
       this.addShortcuts()
       document.addEventListener('click', this.closeDomainDropdown)
-      this.setupDirectionObserver()
     })
+  },
+  watch: {
+    selectedCategory(newCategory) {
+      if (newCategory) {
+        // When category changes, update the list of available experts and clear selections.
+        this.availableExperts = this.dummyExperts[newCategory];
+        this.selectedExperts = [];
+      } else {
+        this.availableExperts = [];
+        this.selectedExperts = [];
+      }
+    }
+  },
+  computed: {
+    resizeHandleStyle() {
+      if (!this.selectedImage) return {}
+      const editorRect = this.$refs.editor.getBoundingClientRect()
+      const imageRect = this.selectedImage.getBoundingClientRect()
+      return {
+        top: `${imageRect.top - editorRect.top + this.$refs.editor.scrollTop}px`,
+        left: `${imageRect.left - editorRect.left}px`,
+        width: `${imageRect.width}px`,
+        height: `${imageRect.height}px`
+      }
+    }
   },
   beforeDestroy() {
     if (this.autoSaveTimer) clearInterval(this.autoSaveTimer)
     if (this.shortcutHandler) document.removeEventListener('keydown', this.shortcutHandler)
     document.removeEventListener('click', this.closeDomainDropdown)
-    if (this.editorObserver) this.editorObserver.disconnect()
+    document.removeEventListener('mousemove', this.doResize)
+    document.removeEventListener('mouseup', this.stopResize)
   },
 
   methods: {
-    setupDirectionObserver() {
-      const editorNode = this.$refs.editor
-      if (!editorNode) return
+    startResize(event) {
+        this.initialResize = {
+            x: event.clientX,
+            y: event.clientY,
+            width: this.selectedImage.width,
+            height: this.selectedImage.height
+        };
+        document.addEventListener('mousemove', this.doResize);
+        document.addEventListener('mouseup', this.stopResize);
+    },
+    doResize(event) {
+        if (!this.selectedImage || !this.initialResize) return;
 
-      const forceLtr = (node) => {
-        if (node.nodeType === 1) {
-          if (node.style.direction !== 'ltr') node.style.direction = 'ltr'
-          if (
-            node.style.textAlign !== 'left' &&
-            node.style.textAlign !== 'center' &&
-            node.style.textAlign !== 'right' &&
-            node.style.textAlign !== 'justify'
-          )
-            node.style.textAlign = 'left'
-          if (node.getAttribute('dir') !== 'ltr') node.setAttribute('dir', 'ltr')
+        const dx = event.clientX - this.initialResize.x;
+        const newWidth = this.initialResize.width + dx;
+
+        if (newWidth > 50) { // Set a minimum width
+            this.selectedImage.style.width = `${newWidth}px`;
+            this.selectedImage.style.height = 'auto'; // Maintain aspect ratio
         }
+    },
+    stopResize() {
+        document.removeEventListener('mousemove', this.doResize);
+        document.removeEventListener('mouseup', this.stopResize);
+        this.initialResize = null;
+        this.syncFromEditor(); // Save changes
+    },
+    // --- SELECTION HELPERS ---
+    saveSelection() {
+      const selection = window.getSelection()
+      if (selection.rangeCount > 0) {
+        this.savedSelection = selection.getRangeAt(0)
       }
-
-      forceLtr(editorNode)
-
-      this.editorObserver = new MutationObserver((mutationsList) => {
-        this.editorObserver.disconnect()
-
-        for (const mutation of mutationsList) {
-          if (mutation.type === 'attributes') {
-            forceLtr(mutation.target)
-          }
-          mutation.addedNodes.forEach(forceLtr)
-        }
-
-        this.editorObserver.observe(editorNode, {
-          attributes: true,
-          childList: true,
-          subtree: true,
-          attributeFilter: ['style', 'dir']
-        })
-      })
-
-      this.editorObserver.observe(editorNode, {
-        attributes: true,
-        childList: true,
-        subtree: true,
-        attributeFilter: ['style', 'dir']
-      })
+    },
+    restoreSelection() {
+      if (this.savedSelection) {
+        const selection = window.getSelection()
+        selection.removeAllRanges()
+        selection.addRange(this.savedSelection)
+      }
+    },
+    focusEditor() {
+      this.$refs.editor.focus()
+      this.restoreSelection()
     },
 
     // --- UPDATED IMAGE UPLOAD TO API ---
@@ -440,29 +539,119 @@ export default {
 
     handlePaste(event) {
       event.preventDefault()
-      const text = (event.clipboardData || window.clipboardData).getData('text/plain')
-      document.execCommand('insertText', false, text)
+      this.saveSelection()
+
+      let pasteHtml = ''
+      if (event.clipboardData) {
+        pasteHtml = event.clipboardData.getData('text/html')
+        if (pasteHtml) {
+          const sanitizedHtml = this.sanitizeHTML(pasteHtml)
+          this.insertHTML(sanitizedHtml)
+        } else {
+          // Fallback to plain text
+          const text = event.clipboardData.getData('text/plain')
+          document.execCommand('insertText', false, text)
+        }
+      }
+      this.syncFromEditor()
+    },
+    sanitizeHTML(html) {
+      const doc = new DOMParser().parseFromString(html, 'text/html')
+      const body = doc.body
+
+      const allowedTags = [
+        'P', 'B', 'I', 'U', 'S', 'STRIKE', 'A', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'BR', 'DIV', 'SPAN',
+        'H1', 'H2', 'H3', 'H4', 'H5', 'H6'
+      ]
+      const allowedAttrs = ['href', 'target', 'style']
+
+      const walkTheDOM = (node, func) => {
+        func(node)
+        if (node.childNodes && node.childNodes.length > 0) {
+          // Use a static copy of childNodes because the list may be modified during iteration
+          Array.from(node.childNodes).forEach(child => {
+            walkTheDOM(child, func)
+          })
+        }
+      }
+
+      walkTheDOM(body, (currentNode) => {
+        // 1. Remove unwanted nodes (comments, etc.)
+        if (currentNode.nodeType !== 1 && currentNode.nodeType !== 3) {
+          currentNode.parentNode?.removeChild(currentNode)
+          return
+        }
+
+        // 2. Process element nodes
+        if (currentNode.nodeType === 1) {
+            // Remove dangerous tags entirely
+            if (['SCRIPT', 'STYLE', 'LINK', 'META', 'IFRAME', 'OBJECT'].includes(currentNode.tagName)) {
+                currentNode.parentNode?.removeChild(currentNode)
+                return
+            }
+
+            // Unwrap disallowed tags, keeping their content
+            if (!allowedTags.includes(currentNode.tagName)) {
+              currentNode.replaceWith(...currentNode.childNodes)
+              return
+            }
+
+            // Remove disallowed attributes
+            const attrs = Array.from(currentNode.attributes)
+            for (const attr of attrs) {
+              if (!allowedAttrs.includes(attr.name.toLowerCase())) {
+                currentNode.removeAttribute(attr.name)
+              }
+            }
+
+            // Sanitize style attribute to remove directionality
+            if (currentNode.hasAttribute('style')) {
+              currentNode.style.direction = ''
+              currentNode.style.textAlign = ''
+              currentNode.style.unicodeBidi = ''
+
+              // If style attribute is now empty, remove it
+              if (!currentNode.getAttribute('style')) {
+                currentNode.removeAttribute('style')
+              }
+            }
+            // Remove dir attribute
+            if (currentNode.hasAttribute('dir')) {
+              currentNode.removeAttribute('dir')
+            }
+        }
+      })
+
+      return body.innerHTML
     },
 
     // Standard Editor Methods
     format(cmd, value = null) {
-      document.execCommand(cmd, false, value)
-      this.syncFromEditor()
-      this.$refs.editor.focus()
+      const blockCommands = [
+        'justifyLeft', 'justifyCenter', 'justifyRight', 'justifyFull',
+        'insertUnorderedList', 'insertOrderedList', 'indent', 'outdent', 'formatBlock'
+      ];
+
+      // For block commands, we don't want to restore a granular selection,
+      // as it can interfere with how the browser applies the block format.
+      // A simple focus is enough.
+      if (blockCommands.includes(cmd)) {
+        this.$refs.editor.focus();
+      } else {
+        this.focusEditor(); // For inline commands, restore the exact selection.
+      }
+
+      document.execCommand(cmd, false, value);
+      this.syncFromEditor();
     },
     isFormatActive(cmd) {
-      if (typeof document.queryCommandState !== 'undefined') {
-        try {
-          return document.queryCommandState(cmd)
-        } catch (e) {
-          return false
-        }
-      }
-      return false
+      return this.activeFormats[cmd]
     },
     setFontSize(event) {
-      if (event.target.value) this.format('fontSize', event.target.value)
-      event.target.value = ''
+      if (event.target.value) {
+        this.format('fontSize', event.target.value)
+      }
+      event.target.value = '' // Reset dropdown
     },
     setTextColor(event) {
       this.format('foreColor', event.target.value)
@@ -471,8 +660,47 @@ export default {
       this.format('hiliteColor', event.target.value)
     },
     insertLink() {
-      const url = prompt('Enter URL:')
-      if (url) this.format('createLink', url)
+      this.saveSelection() // Save selection before opening the popup
+      this.checkSelectionFormats() // Check if we are inside a link to pre-fill
+      this.showLinkEditor = true
+    },
+    applyLink() {
+      if (this.currentLinkUrl) {
+        // Simple validation for URL
+        if (!this.currentLinkUrl.startsWith('http://') && !this.currentLinkUrl.startsWith('https://')) {
+          this.currentLinkUrl = 'https://' + this.currentLinkUrl
+        }
+        this.format('createLink', this.currentLinkUrl)
+      }
+      this.closeLinkEditor()
+    },
+    removeLink() {
+      this.format('unlink')
+      this.closeLinkEditor()
+    },
+    closeLinkEditor() {
+      this.showLinkEditor = false
+      this.currentLinkUrl = ''
+      this.updateToolbarState()
+    },
+    handleEditorClick(event) {
+      // Ctrl+Click to open links
+      const link = event.target.closest('a');
+      if (link && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        window.open(link.href, '_blank');
+        return; // Stop further processing
+      }
+
+      // Handle image selection
+      if (event.target.tagName === 'IMG') {
+        this.selectedImage = event.target
+      } else if (this.selectedImage) {
+        // Deselect if clicking anywhere else that isn't a resize handle
+        if (!event.target.classList.contains('resize-handle')) {
+            this.selectedImage = null
+        }
+      }
     },
     insertHTML(html) {
       document.execCommand('insertHTML', false, html)
@@ -490,13 +718,72 @@ export default {
     updateToolbarState() {
       const editor = this.$refs.editor
       if (!editor) return
+
+      this.saveSelection()
+
       const text = editor.innerText || ''
       this.content = editor.innerHTML
       this.charCount = text.length
       this.wordCount = text.trim() ? text.trim().split(/\s+/).length : 0
       this.isEmpty = !text.trim() && !editor.querySelector('img')
       this.savedStatus = 'Modified'
-      this.$forceUpdate()
+
+      this.checkSelectionFormats()
+      this.$forceUpdate() // Might still be needed if Vue doesn't pick up deep changes in activeFormats
+    },
+    checkSelectionFormats() {
+      // Reset all formats
+      Object.keys(this.activeFormats).forEach(key => {
+        this.activeFormats[key] = false
+      })
+
+      const selection = window.getSelection()
+      if (!selection.rangeCount) return
+
+      let node = selection.anchorNode
+      if (!node) return
+
+      // If the node is a text node, start from its parent
+      if (node.nodeType === 3) {
+        node = node.parentNode
+      }
+
+      // Traverse up to the editor root
+      while (node && node !== this.$refs.editor) {
+        if (node.nodeType === 1) { // Element node
+          const el = node
+          const style = window.getComputedStyle(el)
+
+          // Inline formats
+          if (el.tagName === 'B' || style.fontWeight === 'bold' || parseInt(style.fontWeight, 10) >= 700) this.activeFormats.bold = true
+          if (el.tagName === 'I' || style.fontStyle === 'italic') this.activeFormats.italic = true
+          if (el.tagName === 'U' || style.textDecorationLine.includes('underline')) this.activeFormats.underline = true
+          if (el.tagName === 'S' || el.tagName === 'STRIKE' || style.textDecorationLine.includes('line-through')) this.activeFormats.strikeThrough = true
+
+          // Alignment
+          switch (style.textAlign) {
+            case 'left': this.activeFormats.justifyLeft = true; break
+            case 'center': this.activeFormats.justifyCenter = true; break
+            case 'right': this.activeFormats.justifyRight = true; break
+            case 'justify': this.activeFormats.justifyFull = true; break
+          }
+
+          // Lists
+          if (el.tagName === 'UL') this.activeFormats.insertUnorderedList = true
+          if (el.tagName === 'OL') this.activeFormats.insertOrderedList = true
+
+          // Block formats
+          if (el.tagName === 'BLOCKQUOTE') this.activeFormats.blockquote = true
+          if (el.tagName === 'PRE') this.activeFormats.pre = true
+
+          // Link
+          if (el.tagName === 'A') {
+            this.activeFormats.link = true
+            this.currentLinkUrl = el.getAttribute('href')
+          }
+        }
+        node = node.parentNode
+      }
     },
     syncFromEditor() {
       this.$nextTick(() => this.updateToolbarState())
@@ -565,34 +852,35 @@ export default {
       this.domain = d
       this.showDomain = false
     },
-    closeDomainDropdown(e) {
-      if (
-        this.showDomain &&
-        this.$el.querySelector('.select-div') &&
-        !this.$el.querySelector('.select-div').contains(e.target)
-      ) {
-        this.showDomain = false
-      }
-    },
     addTagFromDiv(e) {
       const v = e.target.innerText.trim()
-      if (v && !this.tags.includes(v)) this.tags.push(v)
+      if (v && !this.customTags.includes(v)) {
+        if (this.customTags.length < 10) {
+          this.customTags.push(v)
+        } else {
+          alert('You can add a maximum of 10 custom tags.')
+        }
+      }
       e.target.innerText = ''
     },
     removeTag(i) {
-      this.tags.splice(i, 1)
+      this.customTags.splice(i, 1)
     },
-    addCoFromDiv(e) {
-      const v = e.target.innerText.trim()
-      if (v && !this.coSubmitters.includes(v)) this.coSubmitters.push(v)
-      e.target.innerText = ''
+    addExpert(expert) {
+      if (!this.selectedExperts.includes(expert)) {
+        this.selectedExperts.push(expert);
+      }
     },
-    removeCo(i) {
-      this.coSubmitters.splice(i, 1)
+    removeExpert(i) {
+        this.selectedExperts.splice(i, 1);
     },
     submitForm() {
-      if (!this.domain) {
-        alert('Please select a domain')
+      if (!this.selectedCategory) {
+        alert('Please select a category')
+        return
+      }
+       if (!this.selectedDomains.length) {
+        alert('Please select at least one domain')
         return
       }
       const formData = {
@@ -600,11 +888,10 @@ export default {
         postSummary: this.postSummary,
         content: this.content,
         fileName: this.fileName,
-        domain: this.domain,
-        tags: this.tags,
-        hasPatent: this.hasPatent,
-        hasDemo: this.hasDemo,
-        coSubmitters: this.coSubmitters,
+        category: this.selectedCategory,
+        domains: this.selectedDomains,
+        customTags: this.customTags,
+        experts: this.selectedExperts,
         scope: this.scope
       }
       console.log('Form Submitted:', formData)
@@ -625,19 +912,6 @@ export default {
 </script>
 
 <style scoped>
-/* --- THE MOST AGGRESSIVE FIX --- */
-.editor-content,
-.editor-content * {
-  unicode-bidi: embed !important;
-  direction: ltr !important;
-}
-.editor-content {
-  text-align: left !important;
-}
-.editor-content * {
-  text-align: inherit !important;
-}
-
 /* --- General & Layout --- */
 .full-page-container {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -804,6 +1078,25 @@ export default {
   background-color: #dbeafe;
   color: #2563eb;
 }
+.link-editor-popup {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border: 1px solid #ccc;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  padding: 10px;
+  border-radius: 6px;
+  display: flex;
+  gap: 8px;
+  z-index: 100;
+}
+.link-editor-popup input {
+  border: 1px solid #ccc;
+  padding: 6px;
+  border-radius: 4px;
+}
 .toolbar button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -840,6 +1133,27 @@ export default {
   position: absolute;
   pointer-events: none;
   font-style: italic;
+}
+
+/* --- Blockquote & Code Block Styling --- */
+.editor-content :deep(blockquote) {
+  border-left: 4px solid #e2e8f0;
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 1.5em;
+  color: #718096;
+  font-style: italic;
+}
+
+.editor-content :deep(pre) {
+  background-color: #f7fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 16px;
+  font-family: 'Courier New', Courier, monospace;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-x: auto;
 }
 
 /* --- FIXED IMAGE STYLING --- */
@@ -891,13 +1205,17 @@ export default {
   color: #2d3748;
   padding-top: 8px;
 }
+.control.inline-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+}
 .control.inline {
   display: flex;
   align-items: center;
   gap: 12px;
 }
-.file-btn,
-.select-div,
 .toggle,
 .toggle-radio {
   padding: 10px 12px;
@@ -907,29 +1225,34 @@ export default {
   background-color: #fff;
   transition: all 0.2s;
 }
-.select-div {
-  position: relative;
-  min-width: 200px;
+.toggle-radio.active,
+.toggle.active {
+  background-color: #2b6cb0;
+  color: #fff;
+  border-color: #2b6cb0;
 }
-.options {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  width: 100%;
-  margin-top: 4px;
-  border: 1px solid #cbd5e0;
-  background-color: #fff;
-  z-index: 10;
-  border-radius: 6px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  overflow: hidden;
-}
-.option {
-  padding: 10px 12px;
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   cursor: pointer;
+  font-size: 14px;
 }
-.option:hover {
+.file-btn {
+  padding: 10px 12px;
+  border: 1px solid #cbd5e0;
+  border-radius: 6px;
+  cursor: pointer;
+  background-color: #fff;
+  transition: all 0.2s;
+}
+.expert-display {
+  padding: 10px 12px;
   background-color: #f7fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #4a5568;
 }
 .small {
   font-size: 12px;
@@ -978,11 +1301,38 @@ export default {
 .tag .remove:hover {
   color: #c53030;
 }
-.toggle-radio.active,
-.toggle.active {
-  background-color: #2b6cb0;
-  color: #fff;
-  border-color: #2b6cb0;
+.select-css {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #495057;
+  background-color: #fff;
+  background-clip: padding-box;
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  transition: border-color .15s ease-in-out,box-shadow .15s ease-in-out;
+}
+.select-css:focus {
+  border-color: #80bdff;
+  outline: 0;
+  box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+}
+.available-experts-list {
+  margin-top: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+.available-expert-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.available-expert-item:hover {
+  background-color: #f7fafc;
 }
 .req {
   color: #c53030;
@@ -1016,5 +1366,23 @@ export default {
 }
 .btn.primary:hover {
   background-color: #2c5282;
+}
+.resize-handles {
+  position: absolute;
+  border: 2px solid #4299e1;
+  pointer-events: none; /* Pass clicks through to the image */
+  z-index: 90; /* Below link editor */
+}
+.resize-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background-color: #4299e1;
+  border: 1px solid #fff;
+  border-radius: 2px;
+  bottom: -7px;
+  right: -7px;
+  cursor: nwse-resize;
+  pointer-events: all; /* Capture mouse events on the handle */
 }
 </style>
