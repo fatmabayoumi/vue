@@ -892,6 +892,8 @@ export default {
         domains: this.selectedDomains,
         customTags: this.customTags,
         experts: this.selectedExperts,
+        hasPatent: this.hasPatent,
+        hasDemo: this.hasDemo,
         scope: this.scope
       }
       console.log('Form Submitted:', formData)
